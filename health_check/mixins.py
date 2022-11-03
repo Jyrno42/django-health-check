@@ -6,6 +6,15 @@ from health_check.exceptions import ServiceWarning
 from health_check.plugins import plugin_dir
 
 
+executor = None
+
+def get_executor(inital_max_workers):
+    global executor
+    if not executor:
+        executor = ThreadPoolExecutor(max_workers=inital_max_workers)
+    return executor
+
+
 class CheckMixin:
     _errors = None
     _plugins = None
@@ -38,18 +47,25 @@ class CheckMixin:
             finally:
                 from django.db import connections
 
-                connections.close_all()
+                for alias in connections:
+                    try:
+                        connection = connections[alias]
+                    except AttributeError:
+                        continue
 
-        with ThreadPoolExecutor(max_workers=len(self.plugins) or 1) as executor:
-            for plugin in executor.map(_run, self.plugins):
-                if plugin.critical_service:
-                    if not HEALTH_CHECK["WARNINGS_AS_ERRORS"]:
-                        errors.extend(
-                            e
-                            for e in plugin.errors
-                            if not isinstance(e, ServiceWarning)
-                        )
-                    else:
-                        errors.extend(plugin.errors)
+                    connection.close_if_unusable_or_obsolete()
+        
+        executor = get_executor(len(self.plugins) or 1)
+        
+        for plugin in executor.map(_run, self.plugins):
+            if plugin.critical_service:
+                if not HEALTH_CHECK["WARNINGS_AS_ERRORS"]:
+                    errors.extend(
+                        e
+                        for e in plugin.errors
+                        if not isinstance(e, ServiceWarning)
+                    )
+                else:
+                    errors.extend(plugin.errors)
 
         return errors
