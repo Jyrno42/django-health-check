@@ -1,3 +1,14 @@
+"""
+A customized version of mixins.py inside django-health-checks package.
+
+The custom variant reuses the worker threads instead of re-creating them for
+ each health check run. This allows us to remove the closing of all connections
+  after health checks complete.
+
+diff between our custom mixins.py and the original (3.17.0):
+    https://github.com/Jyrno42/django-health-check/compare/master...reuse-threads
+"""
+
 import copy
 from concurrent.futures import ThreadPoolExecutor
 
@@ -7,6 +18,7 @@ from health_check.plugins import plugin_dir
 
 
 executor = None
+
 
 def get_executor(inital_max_workers):
     global executor
@@ -54,10 +66,8 @@ class CheckMixin:
                         continue
 
                     connection.close_if_unusable_or_obsolete()
-        
-        executor = get_executor(len(self.plugins) or 1)
-        
-        for plugin in executor.map(_run, self.plugins):
+
+        for plugin in get_executor(len(self.plugins) or 1).map(_run, self.plugins):
             if plugin.critical_service:
                 if not HEALTH_CHECK["WARNINGS_AS_ERRORS"]:
                     errors.extend(
